@@ -1,0 +1,70 @@
+{
+  "name": "radiogram",
+  "version": "0.1.0",
+  "description": "MCP server to relay messages between generative AIs over an MLR-429 LoRa/FSK radio via USB-serial",
+  "type": "module",
+  "license": "MIT",
+  "author": "Circuit Design, Inc.",
+  "homepage": "https://github.com/circuitdesign-inc/radiogram#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/circuitdesign-inc/radiogram.git"
+  },
+  "bugs": {
+    "url": "https://github.com/circuitdesign-inc/radiogram/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "llm",
+    "claude",
+    "generative-ai",
+    "agents",
+    "serialport",
+    "lora",
+    "fsk",
+    "radio",
+    "wireless",
+    "iot",
+    "mlr-429",
+    "nodejs",
+    "typescript"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "bin": {
+    "radiogram": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js serve",
+    "serve": "node dist/cli.js serve",
+    "cli": "node dist/cli.js",
+    "dev": "tsx src/cli.ts",
+    "test:serial": "tsx scripts/serial-test.ts",
+    "test:twoport": "tsx scripts/two-port-test.ts",
+    "probe": "tsx scripts/raw-probe.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@serialport/parser-readline": "^13.0.0",
+    "serialport": "^13.0.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  },
+  "allowScripts": {
+    "@serialport/bindings-cpp@13.0.0": true,
+    "esbuild@0.28.1": true
+  }
+}
