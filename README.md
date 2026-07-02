@@ -70,8 +70,14 @@ radiogram -p COM44 status                 # Windows
 # Send text
 radiogram -p /dev/ttyUSB0 send "hello"
 
+# Send binary (base64)
+radiogram -p /dev/ttyUSB0 send-binary "AAEC/w=="
+
 # Receive one message (default 60 s wait; the radio is slow, so allow time)
 radiogram -p /dev/ttyUSB0 recv -t 120000
+
+# Receive one binary message (shown as base64 / hex)
+radiogram -p /dev/ttyUSB0 recv-binary -t 120000
 
 # Set channel / mode (-s persists to non-volatile memory)
 radiogram -p /dev/ttyUSB0 set-channel 15 -s
@@ -90,9 +96,11 @@ If you have not installed `radiogram` globally, `node dist/cli.js <subcommand>` 
 |---|---|
 | `serve` | Start the MCP server (stdio). Default when no subcommand is given. |
 | `send "<text>"` | Transmit text over radio (waits for completion `*IR=03`). |
-| `recv` | Receive one message (default 60 s wait; exit code 2 on timeout). |
+| `send-binary <base64>` | Transmit binary data over radio (base64 input). |
+| `recv` | Receive one text message (default 60 s wait; exit code 2 on timeout). |
+| `recv-binary` | Receive one binary message and print base64 / hex. |
 | `status` | Show version / channel / mode. |
-| `set-channel <n>` | Set the channel. |
+| `set-channel <n>` | Set the channel (`7`–`46`). |
 | `set-mode <FSK\|LoRa>` | Set the communication mode. |
 | `help` | Help. |
 
@@ -282,9 +290,11 @@ Both screens show words alternating, with the AIs playing shiritori across the r
 | Tool | Arguments | Description |
 |---|---|---|
 | `send_message` | `text` | Transmit text over radio (waits for completion). |
-| `receive_message` | `timeoutMs?` | Dequeue one received message (default 30000 ms). |
+| `send_binary` | `base64` | Transmit binary data over radio (base64 input). |
+| `receive_message` | `timeoutMs?` | Dequeue one received text message (default 30000 ms). |
+| `receive_binary` | `timeoutMs?` | Dequeue one received binary message as base64 / hex. |
 | `get_radio_status` | none | Get version / channel / mode. |
-| `set_channel` | `channel`, `save?` | Set the channel. |
+| `set_channel` | `channel`, `save?` | Set the channel (`7`–`46`). |
 | `set_mode` | `mode` (FSK/LoRa), `save?` | Switch communication mode. |
 
 ## Environment variables
@@ -318,7 +328,7 @@ PORT=/dev/ttyUSB0 BAUD_SCAN=1 npm run probe
 
 - TX: `@DT<LL><data>\r\n` → `*DT=<LL>` (accepted) → `*IR=03` (done)
 - RX: `*DR=<LL><data>\r\n` (LL = data byte count in hex, length-prefixed)
-- Channel: `@CH<XX>[/W]\r\n` → `*CH=<XX>`
+- Channel: `@CH<XX>[/W]\r\n` → `*CH=<XX>` (valid range: `7`–`46`)
 - Mode: `@MO<XX>[/W]\r\n` → `*MO=<XX>` (FSK=01 / LoRa=03)
 - Version: `@VR\r\n` → `*VR=<string>`
 - Errors: `*ER=01`–`05`; TX failures `*IR=01` (carrier sense) / `*IR=02` (correlation sense)
@@ -400,8 +410,14 @@ radiogram -p COM44 status             # Windows
 # テキスト送信
 radiogram -p /dev/ttyUSB0 send "hello"
 
+# バイナリ送信(base64)
+radiogram -p /dev/ttyUSB0 send-binary "AAEC/w=="
+
 # 受信(1件、既定60秒待機。無線が低速なので長め)
 radiogram -p /dev/ttyUSB0 recv -t 120000
+
+# バイナリ受信(base64 / hex 表示)
+radiogram -p /dev/ttyUSB0 recv-binary -t 120000
 
 # チャンネル / モード設定(-s で不揮発保存)
 radiogram -p /dev/ttyUSB0 set-channel 15 -s
@@ -420,9 +436,11 @@ radiogram serve
 |---|---|
 | `serve` | MCP サーバーを起動 (stdio)。引数なしの既定もこれ |
 | `send "<text>"` | テキストを無線送信(送信完了 `*IR=03` まで待機) |
-| `recv` | メッセージを1件受信(既定60秒待機、タイムアウト時 exit code 2) |
+| `send-binary <base64>` | バイナリデータを無線送信(base64 入力) |
+| `recv` | テキストメッセージを1件受信(既定60秒待機、タイムアウト時 exit code 2) |
+| `recv-binary` | バイナリメッセージを1件受信し base64 / hex で表示 |
 | `status` | バージョン / チャンネル / モードを表示 |
-| `set-channel <n>` | チャンネル設定 |
+| `set-channel <n>` | チャンネル設定(`7`〜`46`) |
 | `set-mode <FSK\|LoRa>` | 通信モード設定 |
 | `help` | ヘルプ |
 
@@ -610,9 +628,11 @@ claude --dangerously-skip-permissions "あなたはしりとりの先攻プレ�
 | ツール | 引数 | 説明 |
 |---|---|---|
 | `send_message` | `text` | テキストを無線送信(送信完了まで待機) |
-| `receive_message` | `timeoutMs?` | 受信メッセージを 1 件取り出す(既定 30000ms) |
+| `send_binary` | `base64` | バイナリデータを無線送信(base64 入力) |
+| `receive_message` | `timeoutMs?` | 受信テキストメッセージを 1 件取り出す(既定 30000ms) |
+| `receive_binary` | `timeoutMs?` | 受信バイナリメッセージを base64 / hex で取り出す |
 | `get_radio_status` | なし | バージョン / チャンネル / モードを取得 |
-| `set_channel` | `channel`, `save?` | チャンネル設定 |
+| `set_channel` | `channel`, `save?` | チャンネル設定(`7`〜`46`) |
 | `set_mode` | `mode`(FSK/LoRa), `save?` | 通信モード切替 |
 
 ## 環境変数

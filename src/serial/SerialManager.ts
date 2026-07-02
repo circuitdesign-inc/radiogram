@@ -8,13 +8,13 @@
  *    送信受理は *DT=、送信完了は *IR=03 で、*DR= が送信エコーになることは無い。
  */
 import { SerialPort } from 'serialport';
-import { ReadlineParser } from '@serialport/parser-readline';
 import {
   cmd,
-  parseLine,
+  parseResponseFrames,
   describeError,
   MODE,
   MAX_PAYLOAD,
+  validateChannel,
   type DeviceResponse,
   type ModeName,
 } from './protocol.js';
@@ -44,6 +44,39 @@ const DEFAULT_BAUD = 19200;
 const DEFAULT_TIMEOUT = 5000;
 const TX_TIMEOUT = 10000;
 
+class TextReceiveQueue {
+  constructor(private readonly inner: MessageQueue<Buffer>) {}
+
+  async dequeue(timeoutMs = 30000): Promise<string> {
+    const data = await this.inner.dequeue(timeoutMs);
+    return data.toString('utf8');
+  }
+
+  get size(): number {
+    return this.inner.size;
+  }
+
+  clear(reason?: string): void {
+    this.inner.clear(reason);
+  }
+}
+
+class BinaryReceiveQueue {
+  constructor(private readonly inner: MessageQueue<Buffer>) {}
+
+  dequeue(timeoutMs = 30000): Promise<Buffer> {
+    return this.inner.dequeue(timeoutMs);
+  }
+
+  get size(): number {
+    return this.inner.size;
+  }
+
+  clear(reason?: string): void {
+    this.inner.clear(reason);
+  }
+}
+
 /** モード番号 → 表示名。 */
 function modeName(mode: number): string {
   switch (mode) {
@@ -56,22 +89,24 @@ function modeName(mode: number): string {
 
 export class SerialManager {
   private readonly port: SerialPort;
-  private readonly parser: ReadlineParser;
+  private rxBuffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   private pending: PendingCommand | null = null;
   /** 直前コマンド完了を待つための Promise チェーン(mutex)。 */
   private cmdLock: Promise<unknown> = Promise.resolve();
 
-  /** 外部から届いた RF 受信データのキュー。 */
-  readonly rfReceiveQueue = new MessageQueue<string>();
+  private readonly rfReceiveRawQueue = new MessageQueue<Buffer>();
+  /** 外部から届いた RF 受信データのキュー(テキスト互換用)。 */
+  readonly rfReceiveQueue = new TextReceiveQueue(this.rfReceiveRawQueue);
+  /** 外部から届いた RF 受信データのキュー(バイナリ用)。 */
+  readonly rfReceiveBytesQueue = new BinaryReceiveQueue(this.rfReceiveRawQueue);
 
   constructor(opts: SerialManagerOptions) {
-    this.port = new SerialPort({
+    this.port = new SerialPort({ 
       path: opts.path,
       baudRate: opts.baudRate ?? DEFAULT_BAUD,
       autoOpen: false,
     });
-    this.parser = this.port.pipe(new ReadlineParser({ delimiter: '\r\n' }));
-    this.parser.on('data', (line: string) => this.onLine(line));
+    this.port.on('data', (chunk: Buffer) => this.onBytes(chunk));
     this.port.on('error', (err) => logger.error('シリアルポートエラー:', err.message));
   }
 
@@ -92,7 +127,7 @@ export class SerialManager {
   /** ポートを閉じる。 */
   close(): Promise<void> {
     return new Promise((resolve) => {
-      this.rfReceiveQueue.clear('ポートを閉じました');
+      this.rfReceiveRawQueue.clear('ポートを閉じました');
       if (!this.port.isOpen) {
         resolve();
         return;
@@ -101,14 +136,22 @@ export class SerialManager {
     });
   }
 
-  /** 受信1行のルーティング。 */
-  private onLine(rawLine: string): void {
-    const resp = parseLine(rawLine);
+  /** 受信バイト列をフレームへ分割し、順にルーティングする。 */
+  private onBytes(chunk: Buffer): void {
+    const parsed = parseResponseFrames(Buffer.concat([this.rxBuffer, chunk]));
+    this.rxBuffer = parsed.remaining;
+    for (const resp of parsed.responses) {
+      this.onResponse(resp);
+    }
+  }
+
+  /** 受信応答のルーティング。 */
+  private onResponse(resp: DeviceResponse): void {
     logger.debug('RX:', resp.type, resp.raw);
 
     // 外部からの受信データは常に受信キューへ(送信エコーではない)。
     if (resp.type === 'data') {
-      this.rfReceiveQueue.enqueue(resp.payload);
+      this.rfReceiveRawQueue.enqueue(resp.payloadBytes);
       return;
     }
 
@@ -182,21 +225,18 @@ export class SerialManager {
     return false;
   }
 
-  /**
-   * テキストを無線送信する。*DT= 受理 → *IR=03 完了で解決。
-   * *IR=01/02(センスエラー)や *ER= は拒否。
-   */
-  async transmit(text: string, mode?: ModeName): Promise<void> {
-    if (mode) {
-      const max = MAX_PAYLOAD[mode];
-      const bytes = Buffer.byteLength(text, 'utf8');
-      if (bytes > max) {
-        throw new Error(`ペイロードが大きすぎます: ${bytes} バイト (${mode} の上限 ${max} バイト)`);
-      }
+  private static checkPayloadSize(bytes: number, mode?: ModeName): void {
+    if (!mode) return;
+    const max = MAX_PAYLOAD[mode];
+    if (bytes > max) {
+      throw new Error(`ペイロードが大きすぎます: ${bytes} バイト (${mode} の上限 ${max} バイト)`);
     }
+  }
+
+  private async transmitPayload(payload: Buffer, description: string): Promise<void> {
     await this.sendCommand<void>(
-      cmd.transmit(text),
-      'transmit',
+      payload,
+      description,
       (resolve, reject) => (resp) => {
         if (SerialManager.rejectOnError(resp, reject)) return true;
         if (resp.type === 'txError') {
@@ -212,6 +252,23 @@ export class SerialManager {
       },
       TX_TIMEOUT,
     );
+  }
+
+  /**
+   * テキストを無線送信する。*DT= 受理 → *IR=03 完了で解決。
+   * *IR=01/02(センスエラー)や *ER= は拒否。
+   */
+  async transmit(text: string, mode?: ModeName): Promise<void> {
+    SerialManager.checkPayloadSize(Buffer.byteLength(text, 'utf8'), mode);
+    await this.transmitPayload(cmd.transmit(text), 'transmit');
+  }
+
+  /**
+   * バイト列を無線送信する。データ部は UTF-8 変換せずそのまま送る。
+   */
+  async transmitBytes(data: Buffer, mode?: ModeName): Promise<void> {
+    SerialManager.checkPayloadSize(data.length, mode);
+    await this.transmitPayload(cmd.transmitBytes(data), 'transmitBytes');
   }
 
   /** ファームウェアバージョンを取得する。 */
@@ -250,6 +307,7 @@ export class SerialManager {
 
   /** チャンネルを設定する(save=true で不揮発保存)。 */
   setChannel(channel: number, save = false): Promise<number> {
+    validateChannel(channel);
     return this.sendCommand<number>(
       cmd.setChannel(channel, save),
       'setChannel',

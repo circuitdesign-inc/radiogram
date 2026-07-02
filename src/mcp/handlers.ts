@@ -5,7 +5,9 @@ import type { SerialManager } from '../serial/SerialManager.js';
 import { QueueTimeoutError } from '../utils/MessageQueue.js';
 import {
   SendMessageInput,
+  SendBinaryInput,
   ReceiveMessageInput,
+  ReceiveBinaryInput,
   SetChannelInput,
   SetModeInput,
 } from './tools.js';
@@ -40,6 +42,17 @@ export function createHandlers(serial: SerialManager): Record<string, Handler> {
       }
     },
 
+    send_binary: async (args) => {
+      const { base64 } = SendBinaryInput.parse(args);
+      const data = Buffer.from(base64, 'base64');
+      try {
+        await serial.transmitBytes(data);
+        return ok(`バイナリ送信完了: ${data.length} バイト`);
+      } catch (err) {
+        return fail(`バイナリ送信失敗: ${(err as Error).message}`);
+      }
+    },
+
     receive_message: async (args) => {
       const { timeoutMs } = ReceiveMessageInput.parse(args);
       try {
@@ -50,6 +63,19 @@ export function createHandlers(serial: SerialManager): Record<string, Handler> {
           return ok('(受信メッセージなし: タイムアウト)');
         }
         return fail(`受信失敗: ${(err as Error).message}`);
+      }
+    },
+
+    receive_binary: async (args) => {
+      const { timeoutMs } = ReceiveBinaryInput.parse(args);
+      try {
+        const data = await serial.rfReceiveBytesQueue.dequeue(timeoutMs);
+        return ok(JSON.stringify({ base64: data.toString('base64'), hex: data.toString('hex'), length: data.length }));
+      } catch (err) {
+        if (err instanceof QueueTimeoutError) {
+          return ok('(受信メッセージなし: タイムアウト)');
+        }
+        return fail(`バイナリ受信失敗: ${(err as Error).message}`);
       }
     },
 

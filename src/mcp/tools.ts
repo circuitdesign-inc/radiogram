@@ -2,9 +2,25 @@
  * MCP ツールの入力スキーマ(Zod)とツールメタ定義。
  */
 import { z } from 'zod';
+import { MAX_CHANNEL, MIN_CHANNEL } from '../serial/protocol.js';
+
+const Base64Payload = z
+  .string()
+  .min(1)
+  .refine((value) => {
+    try {
+      return Buffer.from(value, 'base64').toString('base64').replace(/=+$/, '') === value.replace(/=+$/, '');
+    } catch {
+      return false;
+    }
+  }, '有効な base64 文字列を指定してください');
 
 export const SendMessageInput = z.object({
   text: z.string().min(1).describe('無線で送信するテキスト'),
+});
+
+export const SendBinaryInput = z.object({
+  base64: Base64Payload.describe('無線で送信するバイナリデータ(base64)'),
 });
 
 export const ReceiveMessageInput = z.object({
@@ -17,10 +33,17 @@ export const ReceiveMessageInput = z.object({
     .describe('受信待機の最大ミリ秒。0 で即時(キューにあれば返す)。既定 30000'),
 });
 
+export const ReceiveBinaryInput = ReceiveMessageInput;
+
 export const GetRadioStatusInput = z.object({});
 
 export const SetChannelInput = z.object({
-  channel: z.number().int().min(7).max(255).describe('チャンネル番号(7〜255、機種の有効範囲内)'),
+  channel: z
+    .number()
+    .int()
+    .min(MIN_CHANNEL)
+    .max(MAX_CHANNEL)
+    .describe(`チャンネル番号(${MIN_CHANNEL}〜${MAX_CHANNEL})`),
   save: z.boolean().default(false).describe('true で不揮発メモリに保存(/W)'),
 });
 
@@ -44,9 +67,35 @@ export const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'send_binary',
+    description:
+      'MLR-429 無線機でバイナリデータを送信する。入力は base64。送信完了(*IR=03)まで待機する。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        base64: { type: 'string', description: '無線で送信するバイナリデータ(base64)' },
+      },
+      required: ['base64'],
+    },
+  },
+  {
     name: 'receive_message',
     description:
-      '無線で届いたメッセージを 1 件受信する。キューが空なら timeoutMs まで待機する。',
+      '無線で届いたメッセージを 1 件テキストとして受信する。キューが空なら timeoutMs まで待機する。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        timeoutMs: {
+          type: 'number',
+          description: '受信待機の最大ミリ秒(既定 30000、0 で即時)',
+        },
+      },
+    },
+  },
+  {
+    name: 'receive_binary',
+    description:
+      '無線で届いたメッセージを 1 件バイナリとして受信し、base64 と hex で返す。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -68,7 +117,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        channel: { type: 'number', description: 'チャンネル番号(7〜255)' },
+        channel: { type: 'number', description: `チャンネル番号(${MIN_CHANNEL}〜${MAX_CHANNEL})` },
         save: { type: 'boolean', description: 'true で不揮発保存' },
       },
       required: ['channel'],

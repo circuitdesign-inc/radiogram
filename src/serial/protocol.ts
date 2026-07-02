@@ -32,6 +32,10 @@ export const MODE = {
 
 export type ModeName = 'FSK' | 'LoRa';
 
+/** MLR-429 の有効チャンネル範囲。 */
+export const MIN_CHANNEL = 7;
+export const MAX_CHANNEL = 46;
+
 /** モード別の最大ペイロード(バイト)。 */
 export const MAX_PAYLOAD: Record<ModeName, number> = {
   FSK: 60,
@@ -43,16 +47,30 @@ export function toHex2(value: number): string {
   return value.toString(16).toUpperCase().padStart(2, '0');
 }
 
+/** チャンネル番号が有効範囲内か確認する。 */
+export function validateChannel(channel: number): void {
+  if (!Number.isInteger(channel) || channel < MIN_CHANNEL || channel > MAX_CHANNEL) {
+    throw new Error(`チャンネル番号は ${MIN_CHANNEL}〜${MAX_CHANNEL} の整数で指定してください`);
+  }
+}
+
+/**
+ * データ送信コマンド @DT<LL><data>\r\n をバイト列から組み立てる。
+ * data は変換せずそのまま送信し、LL はバイト数。
+ */
+export function buildDataCommandBytes(data: Buffer): Buffer {
+  const header = Buffer.from(`@DT${toHex2(data.length)}`, 'ascii');
+  const tail = Buffer.from(CR_LF, 'ascii');
+  return Buffer.concat([header, data, tail]);
+}
+
 /**
  * データ送信コマンド @DT<LL><data>\r\n を組み立てる。
  * data は UTF-8 で符号化し、LL はそのバイト数。
  * 戻り値は Buffer（マルチバイト文字をそのまま送るため）。
  */
 export function buildDataCommand(text: string): Buffer {
-  const data = Buffer.from(text, 'utf8');
-  const header = Buffer.from(`@DT${toHex2(data.length)}`, 'ascii');
-  const tail = Buffer.from(CR_LF, 'ascii');
-  return Buffer.concat([header, data, tail]);
+  return buildDataCommandBytes(Buffer.from(text, 'utf8'));
 }
 
 /**
@@ -66,10 +84,13 @@ export function buildSimpleCommand(code: string, args = ''): Buffer {
 /** よく使うコマンドの組み立てヘルパ。 */
 export const cmd = {
   transmit: (text: string): Buffer => buildDataCommand(text),
+  transmitBytes: (data: Buffer): Buffer => buildDataCommandBytes(data),
   getVersion: (): Buffer => buildSimpleCommand('VR'),
   getChannel: (): Buffer => buildSimpleCommand('CH'),
-  setChannel: (channel: number, save = false): Buffer =>
-    buildSimpleCommand('CH', toHex2(channel) + (save ? '/W' : '')),
+  setChannel: (channel: number, save = false): Buffer => {
+    validateChannel(channel);
+    return buildSimpleCommand('CH', toHex2(channel) + (save ? '/W' : ''));
+  },
   getMode: (): Buffer => buildSimpleCommand('MO'),
   setMode: (mode: number, save = false): Buffer =>
     buildSimpleCommand('MO', toHex2(mode) + (save ? '/W' : '')),
@@ -77,7 +98,7 @@ export const cmd = {
 
 /** デバイスから受信した1行を解析した結果(判別共用体)。 */
 export type DeviceResponse =
-  | { type: 'data'; raw: string; payload: string; length: number } // *DR= 外部受信
+  | { type: 'data'; raw: string; payload: string; payloadBytes: Buffer; length: number } // *DR= 外部受信
   | { type: 'txAck'; raw: string; length: number }                 // *DT= 送信受理
   | { type: 'txDone'; raw: string }                                // *IR=03 送信完了
   | { type: 'txError'; raw: string; code: string }                 // *IR=01/02 送信失敗
@@ -94,6 +115,17 @@ function stripEol(line: string): string {
   return line.replace(/[\r\n]+$/, '');
 }
 
+function parseDataFrame(raw: string, payloadBytes: Buffer): DeviceResponse {
+  const length = parseInt(raw.slice(4, 6), 16);
+  return {
+    type: 'data',
+    raw,
+    payload: payloadBytes.toString('utf8'),
+    payloadBytes,
+    length: Number.isNaN(length) ? payloadBytes.length : length,
+  };
+}
+
 /**
  * デバイス出力1行を DeviceResponse に解析する。
  * 入力は改行で分割済みの1行(末尾 CR/LF は許容)。
@@ -103,9 +135,8 @@ export function parseLine(rawLine: string): DeviceResponse {
 
   if (raw.startsWith('*DR=')) {
     const body = raw.slice(4);
-    const length = parseInt(body.slice(0, 2), 16);
     const payload = body.slice(2);
-    return { type: 'data', raw, payload, length: Number.isNaN(length) ? payload.length : length };
+    return parseDataFrame(raw, Buffer.from(payload, 'binary'));
   }
   if (raw.startsWith('*DT=')) {
     const length = parseInt(raw.slice(4, 6), 16);
@@ -136,6 +167,58 @@ export function parseLine(rawLine: string): DeviceResponse {
     return { type: 'rssi', raw, text: raw };
   }
   return { type: 'unknown', raw };
+}
+
+export interface FrameParseResult {
+  responses: DeviceResponse[];
+  remaining: Buffer;
+}
+
+/**
+ * シリアル受信バイト列から、CR/LF 終端または *DR=<LL><data>\r\n フレームを切り出す。
+ * *DR= は LL に従って data をバイト列のまま保持する。
+ */
+export function parseResponseFrames(input: Buffer): FrameParseResult {
+  const responses: DeviceResponse[] = [];
+  let offset = 0;
+
+  while (offset < input.length) {
+    const remaining = input.subarray(offset);
+    if (remaining.length >= 6 && remaining.subarray(0, 4).toString('ascii') === '*DR=') {
+      const lengthText = remaining.subarray(4, 6).toString('ascii');
+      const length = parseInt(lengthText, 16);
+      if (Number.isNaN(length)) {
+        const eol = remaining.indexOf(CR_LF);
+        if (eol < 0) break;
+        responses.push(parseLine(remaining.subarray(0, eol + 2).toString('binary')));
+        offset += eol + 2;
+        continue;
+      }
+
+      const frameLength = 6 + length + 2;
+      if (remaining.length < frameLength) break;
+      const tail = remaining.subarray(6 + length, frameLength).toString('ascii');
+      if (tail !== CR_LF) {
+        const eol = remaining.indexOf(CR_LF);
+        if (eol < 0) break;
+        responses.push(parseLine(remaining.subarray(0, eol + 2).toString('binary')));
+        offset += eol + 2;
+        continue;
+      }
+
+      const payloadBytes = Buffer.from(remaining.subarray(6, 6 + length));
+      responses.push(parseDataFrame(`*DR=${lengthText}${payloadBytes.toString('binary')}`, payloadBytes));
+      offset += frameLength;
+      continue;
+    }
+
+    const eol = remaining.indexOf(CR_LF);
+    if (eol < 0) break;
+    responses.push(parseLine(remaining.subarray(0, eol + 2).toString('binary')));
+    offset += eol + 2;
+  }
+
+  return { responses, remaining: input.subarray(offset) };
 }
 
 /** *ER= コードの人間可読な説明。 */

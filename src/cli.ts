@@ -10,9 +10,11 @@
  * 使い方:
  *   radiogram serve                       MCP サーバーを起動(stdio)
  *   radiogram send "こんにちは"            テキストを送信
+ *   radiogram send-binary <base64>        バイナリを送信(base64)
  *   radiogram recv [--timeout 60000]      メッセージを1件受信
+ *   radiogram recv-binary [--timeout ...] バイナリを1件受信(base64/hex表示)
  *   radiogram status                      バージョン/チャンネル/モードを表示
- *   radiogram set-channel 15 [--save]     チャンネル設定
+ *   radiogram set-channel 15 [--save]     チャンネル設定(7〜46)
  *   radiogram set-mode LoRa [--save]      通信モード設定(FSK|LoRa)
  *   radiogram help                        ヘルプ
  *
@@ -29,7 +31,7 @@ import { SerialManager } from './serial/SerialManager.js';
 import { QueueTimeoutError } from './utils/MessageQueue.js';
 import { startMcpServer } from './server.js';
 import { defaultSerialPort } from './utils/platform.js';
-import type { ModeName } from './serial/protocol.js';
+import { MAX_CHANNEL, MIN_CHANNEL, validateChannel, type ModeName } from './serial/protocol.js';
 
 interface ParsedArgs {
   cmd: string;
@@ -81,9 +83,11 @@ const USAGE = `radiogram — MLR-429 無線交信 CLI / MCP サーバー
 使い方:
   radiogram serve                     MCP サーバーを起動 (stdio)
   radiogram send "<text>"             テキストを無線送信
+  radiogram send-binary <base64>      バイナリを無線送信(base64)
   radiogram recv [-t <ms>]            メッセージを1件受信 (既定 60000ms 待機)
+  radiogram recv-binary [-t <ms>]     バイナリを1件受信(base64/hex表示)
   radiogram status                    バージョン/チャンネル/モードを表示
-  radiogram set-channel <n> [-s]      チャンネル設定 (-s で不揮発保存)
+  radiogram set-channel <n> [-s]      チャンネル設定(${MIN_CHANNEL}〜${MAX_CHANNEL}, -s で不揮発保存)
   radiogram set-mode <FSK|LoRa> [-s]  通信モード設定 (-s で不揮発保存)
   radiogram help                      このヘルプ
 
@@ -132,6 +136,19 @@ async function main(): Promise<void> {
       break;
     }
 
+    case 'send-binary':
+    case 'sendbinary': {
+      const base64 = positional[0];
+      if (!base64) throw new Error('base64 データを指定してください: radiogram send-binary <base64>');
+      const data = Buffer.from(base64, 'base64');
+      if (data.toString('base64').replace(/=+$/, '') !== base64.replace(/=+$/, '')) {
+        throw new Error('有効な base64 データを指定してください');
+      }
+      await withSerial(port, baud, (s) => s.transmitBytes(data));
+      console.log(`バイナリ送信完了: ${data.length} バイト`);
+      break;
+    }
+
     case 'recv':
     case 'receive': {
       try {
@@ -139,6 +156,27 @@ async function main(): Promise<void> {
           s.rfReceiveQueue.dequeue(timeout),
         );
         console.log(msg);
+      } catch (err) {
+        if (err instanceof QueueTimeoutError) {
+          console.error('(受信メッセージなし: タイムアウト)');
+          process.exitCode = 2;
+          return;
+        }
+        throw err;
+      }
+      break;
+    }
+
+    case 'recv-binary':
+    case 'receive-binary':
+    case 'recvbinary': {
+      try {
+        const data = await withSerial(port, baud, (s) =>
+          s.rfReceiveBytesQueue.dequeue(timeout),
+        );
+        console.log(`base64: ${data.toString('base64')}`);
+        console.log(`hex:    ${data.toString('hex')}`);
+        console.log(`length: ${data.length}`);
       } catch (err) {
         if (err instanceof QueueTimeoutError) {
           console.error('(受信メッセージなし: タイムアウト)');
@@ -161,7 +199,11 @@ async function main(): Promise<void> {
     case 'set-channel':
     case 'setchannel': {
       const ch = Number(positional[0]);
-      if (!Number.isInteger(ch)) throw new Error('チャンネル番号を指定してください: radiogram set-channel <n>');
+      try {
+        validateChannel(ch);
+      } catch {
+        throw new Error(`チャンネル番号を ${MIN_CHANNEL}〜${MAX_CHANNEL} の範囲で指定してください: radiogram set-channel <n>`);
+      }
       const result = await withSerial(port, baud, (s) => s.setChannel(ch, save));
       console.log(`チャンネルを ${result} に設定しました${save ? ' (保存済み)' : ''}`);
       break;
