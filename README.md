@@ -188,6 +188,71 @@ claude mcp add radiogram ^
   -- node C:\path\to\radiogram\dist\cli.js serve
 ```
 
+### Codex CLI
+
+There are two ways to register `radiogram` with Codex.
+
+**Option A — `codex mcp add` (recommended).** Register it in one command. The `--` separates
+Codex options from the launch command:
+
+```bash
+# Linux / macOS
+codex mcp add radiogram \
+  --env SERIAL_PORT=/dev/ttyUSB0 --env BAUD_RATE=19200 \
+  -- node /absolute/path/to/radiogram/dist/cli.js serve
+
+# Windows
+codex mcp add radiogram ^
+  --env SERIAL_PORT=COM44 --env BAUD_RATE=19200 ^
+  -- node C:\path\to\radiogram\dist\cli.js serve
+```
+
+**Option B — edit the config file.** Codex reads MCP server definitions from
+`~/.codex/config.toml` (Windows: `%USERPROFILE%\.codex\config.toml`). Add a `radiogram` entry:
+
+```toml
+# Windows
+[mcp_servers.radiogram]
+command = "node"
+args = ["C:\\path\\to\\radiogram\\dist\\cli.js", "serve"]
+env = { SERIAL_PORT = "COM44", BAUD_RATE = "19200" }
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+```
+
+```toml
+# Linux / macOS
+[mcp_servers.radiogram]
+command = "node"
+args = ["/absolute/path/to/radiogram/dist/cli.js", "serve"]
+env = { SERIAL_PORT = "/dev/ttyUSB0", BAUD_RATE = "19200" }
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+```
+
+#### Verify it was added
+
+List the registered MCP servers and confirm `radiogram` appears:
+
+```bash
+codex mcp list
+# JSON output:
+codex mcp list --json
+```
+
+Show the details of just the `radiogram` entry (command / args / env):
+
+```bash
+codex mcp get radiogram
+codex mcp get radiogram --json
+```
+
+If you used Option B (edited the file directly), restart Codex first, then run the commands
+above. Inside a Codex session you can also ask "List the available MCP tools" and confirm that
+`send_message` / `receive_message` show up.
+
+To remove it later: `codex mcp remove radiogram`.
+
 ### Google Antigravity
 
 Add the same `mcpServers` block via Antigravity's **MCP settings** (Settings → MCP /
@@ -276,6 +341,28 @@ claude --dangerously-skip-permissions "You are the first player in shiritori. Us
 ```
 
 Both screens show words alternating, with the AIs playing shiritori across the radio link.
+
+### Running the demo with Codex CLI
+
+You can use Codex CLI as one (or both) of the players. Register `radiogram` first
+(see [Codex CLI](#codex-cli)), then start each side non-interactively with `codex exec`.
+Override `SERIAL_PORT` per terminal with `-c` so terminals A / B use different radios:
+
+```bash
+# Terminal B (second player / port B) — start first, waits for the opponent's word
+codex exec --dangerously-bypass-approvals-and-sandbox \
+  -c mcp_servers.radiogram.env.SERIAL_PORT=/dev/ttyUSB1 \
+  "You are the second player in shiritori. Use only radiogram's receive_message and send_message tools to play shiritori with the other AI over radio. Rules: (1) first receive_message(timeoutMs:120000) to get the opponent's word. (2) think of a Japanese word that starts with the last kana of the received word. (3) send it with send_message. (4) words ending in 'ん' are forbidden. (5) after 5 receive→send round trips, finally send only 'END' with send_message and stop. (6) each turn, print 'received word → my word'. If the opponent sends 'END', stop immediately."
+
+# Terminal A (first player / port A) — start next, sends the first word
+codex exec --dangerously-bypass-approvals-and-sandbox \
+  -c mcp_servers.radiogram.env.SERIAL_PORT=/dev/ttyUSB0 \
+  "You are the first player in shiritori. Use only radiogram's send_message and receive_message tools to play shiritori with the other AI over radio. Rules: (1) first send one Japanese word with send_message (e.g. しりとり). (2) then receive_message(timeoutMs:120000) to get the opponent's word. (3) think of another word starting with the last kana of the received word and send it with send_message. (4) words ending in 'ん' are forbidden. (5) stop after 5 send→receive round trips. If the opponent sends 'END', stop immediately. (6) each turn, print 'my word → received word'."
+```
+
+> On Windows, use `COM68` / `COM30` etc. for `SERIAL_PORT` and run each command in a
+> separate terminal (a serial port allows only one process). You can mix players freely,
+> e.g. Codex on side A and Claude Code / Antigravity on side B.
 
 ### Troubleshooting the demo
 
@@ -418,7 +505,7 @@ radiogram -p /dev/ttyUSB0 recv -t 120000
 
 # バイナリ受信(base64 / hex 表示)
 radiogram -p /dev/ttyUSB0 recv-binary -t 120000
-
+CP<>
 # チャンネル / モード設定(-s で不揮発保存)
 radiogram -p /dev/ttyUSB0 set-channel 15 -s
 radiogram -p /dev/ttyUSB0 set-mode LoRa -s
@@ -527,6 +614,71 @@ claude mcp add radiogram ^
   -- node C:\path\to\radiogram\dist\cli.js serve
 ```
 
+### Codex CLI
+
+Codex に `radiogram` を登録する方法は2つあります。
+
+**方法A — `codex mcp add`(推奨)。** 1コマンドで登録できます。`--` 以降が MCP サーバーの
+起動コマンドです(Codex 自身のオプションと区切るために `--` が必要):
+
+```bash
+# Linux / macOS
+codex mcp add radiogram \
+  --env SERIAL_PORT=/dev/ttyUSB0 --env BAUD_RATE=19200 \
+  -- node /absolute/path/to/radiogram/dist/cli.js serve
+
+# Windows
+codex mcp add radiogram ^
+  --env SERIAL_PORT=COM44 --env BAUD_RATE=19200 ^
+  -- node C:\path\to\radiogram\dist\cli.js serve
+```
+
+**方法B — 設定ファイルを直接編集。** Codex は MCP サーバー定義を `~/.codex/config.toml`
+(Windows: `%USERPROFILE%\.codex\config.toml`)から読み込みます。`radiogram` を追加します:
+
+```toml
+# Windows
+[mcp_servers.radiogram]
+command = "node"
+args = ["C:\\path\\to\\radiogram\\dist\\cli.js", "serve"]
+env = { SERIAL_PORT = "COM44", BAUD_RATE = "19200" }
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+```
+
+```toml
+# Linux / macOS
+[mcp_servers.radiogram]
+command = "node"
+args = ["/absolute/path/to/radiogram/dist/cli.js", "serve"]
+env = { SERIAL_PORT = "/dev/ttyUSB0", BAUD_RATE = "19200" }
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+```
+
+#### 追加されたかの確認
+
+登録済みの MCP サーバー一覧を表示し、`radiogram` があることを確認します:
+
+```bash
+codex mcp list
+# JSON 出力:
+codex mcp list --json
+```
+
+`radiogram` の設定内容(command / args / env)だけを表示:
+
+```bash
+codex mcp get radiogram
+codex mcp get radiogram --json
+```
+
+方法B(ファイルを直接編集)で登録した場合は、先に Codex を再起動してから上記コマンドを
+実行してください。Codex セッション内で「利用可能なMCPツールを一覧にして」と尋ね、
+`send_message` / `receive_message` が表示されることでも確認できます。
+
+削除したい場合: `codex mcp remove radiogram`。
+
 ### Google Antigravity
 
 Antigravity の **MCP 設定**(設定 → MCP / `mcp_config.json`)に、同じ `mcpServers` 形式で
@@ -615,6 +767,28 @@ claude --dangerously-skip-permissions "あなたはしりとりの先攻プレ�
 ```
 
 両画面に単語のやり取りが交互に表示され、無線越しにAI同士がしりとりを進める。
+
+### Codex CLI でしりとりを始める
+
+プレイヤーの片方(または両方)を Codex CLI にできます。先に `radiogram` を登録し
+([Codex CLI](#codex-cli-1) 参照)、各側を `codex exec` で非対話起動します。ターミナル A / B で
+別々の無線機を使うため、`-c` で `SERIAL_PORT` をターミナルごとに上書きします:
+
+```bash
+# ターミナルB(後攻 / ポートB)— 先に起動し、相手の単語待ちで待機
+codex exec --dangerously-bypass-approvals-and-sandbox \
+  -c mcp_servers.radiogram.env.SERIAL_PORT=/dev/ttyUSB1 \
+  "あなたはしりとりの後攻プレイヤーです。radiogram の receive_message と send_message ツールだけを使い、無線で相手AIとしりとりをします。ルール:(1)まず receive_message(timeoutMs:120000) で相手の単語を受け取る。(2)受け取った単語の最後のかな文字から始まる、別の日本語の単語を考える。(3)それを send_message で送る。(4)語尾が『ん』になる単語は禁止。(5)受信→送信を5往復したら、最後に send_message で『END』だけを送って終了する。(6)毎ターン『受信した単語 → 自分が送る単語』を画面に表示する。相手から『END』が来たら即終了。"
+
+# ターミナルA(先攻 / ポートA)— 次に起動し、最初の単語を送る
+codex exec --dangerously-bypass-approvals-and-sandbox \
+  -c mcp_servers.radiogram.env.SERIAL_PORT=/dev/ttyUSB0 \
+  "あなたはしりとりの先攻プレイヤーです。radiogram の send_message と receive_message ツールだけを使い、無線で相手AIとしりとりをします。ルール:(1)まず好きな日本語の単語を1つ send_message で送る(例:しりとり)。(2)その後 receive_message(timeoutMs:120000) で相手の単語を受け取る。(3)受け取った単語の最後のかな文字から始まる別の単語を考えて send_message で送る。(4)語尾が『ん』になる単語は禁止。(5)送信→受信を5往復したら終了。相手から『END』が来たら即終了。(6)毎ターン『自分が送る単語 → 受信した単語』を画面に表示する。"
+```
+
+> Windows では `SERIAL_PORT` に `COM68` / `COM30` などを指定し、各コマンドを別々のターミナルで
+> 実行します(シリアルポートは1プロセスしか開けません)。プレイヤーは自由に組み合わせでき、
+> 例えば A 側を Codex、B 側を Claude Code / Antigravity にもできます。
 
 ### うまくいかないとき
 
